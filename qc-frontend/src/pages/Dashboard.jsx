@@ -26,16 +26,18 @@ ChartJS.register(
   Filler
 );
 
-const AnimatedNumber = ({ value, duration = 2000, isDecimal = false }) => {
+const AnimatedNumber = ({ value, duration = 800, isDecimal = false }) => {
   const [count, setCount] = useState(0);
 
   useEffect(() => {
     let start = 0;
-    const end = parseFloat(value);
-    const increment = end / (duration / 16);
-    
+    const end = Number(value) || 0;
+    const steps = duration / 16;
+    const increment = end / steps;
+
     const timer = setInterval(() => {
       start += increment;
+
       if (start >= end) {
         setCount(end);
         clearInterval(timer);
@@ -51,16 +53,20 @@ const AnimatedNumber = ({ value, duration = 2000, isDecimal = false }) => {
 };
 
 const SimplePieChart = ({ rate }) => {
+  const safeRate = Number(rate) || 0;
+
   return (
-    <div 
+    <div
       className="w-16 h-16 rounded-full relative shadow-inner border-2 border-white"
       style={{
-        background: `conic-gradient(#ef4444 0% ${rate}%, #22c55e ${rate}% 100%)`,
-        transition: 'all 2s ease-in-out'
+        background: `conic-gradient(#ef4444 0% ${safeRate}%, #22c55e ${safeRate}% 100%)`,
+        transition: "all 2s ease-in-out",
       }}
     >
       <div className="absolute inset-2 bg-white rounded-full flex items-center justify-center">
-        <span className="text-[8px] font-bold text-gray-400">{rate}%</span>
+        <span className="text-[8px] font-bold text-gray-400">
+          {safeRate.toFixed(1)}%
+        </span>
       </div>
     </div>
   );
@@ -69,31 +75,73 @@ const SimplePieChart = ({ rate }) => {
 export default function Dashboard() {
   const [time, setTime] = useState("");
   const [user, setUser] = useState(null);
+  const [dashboard, setDashboard] = useState({
+    total_inspections: 0,
+    ok_count: 0,
+    ng_count: 0,
+    ng_rate: 0,
+    recent_inspections: [],
+  });
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     const fetchUser = async () => {
       try {
         const res = await API.get("/me");
         setUser(res.data);
-      } catch (err) { console.log(err); }
+      } catch (err) {
+        console.log("Fetch user error:", err.response?.data || err);
+      }
     };
+
+    const fetchDashboard = async () => {
+      try {
+        setLoading(true);
+        const res = await API.get("/dashboard");
+        setDashboard(res.data);
+      } catch (err) {
+        console.log("Fetch dashboard error:", err.response?.data || err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
     fetchUser();
+    fetchDashboard();
 
     const interval = setInterval(() => {
-      setTime(new Date().toLocaleTimeString('en-GB'));
+      setTime(new Date().toLocaleTimeString("en-GB"));
     }, 1000);
+
     return () => clearInterval(interval);
   }, []);
 
-  // --- DATA UNTUK GRAFIK TREND ---
-  // TOLONG NANTI INI DISESUAIIN YA DATANYA
+  const recentData = dashboard.recent_inspections || [];
+
+  const trendLabels =
+    recentData.length > 0
+      ? [...recentData]
+          .reverse()
+          .map((item) =>
+            new Date(item.timestamp).toLocaleTimeString("id-ID", {
+              hour: "2-digit",
+              minute: "2-digit",
+            })
+          )
+      : ["No Data"];
+
+  const trendValues =
+    recentData.length > 0
+      ? [...recentData].reverse().map((item) => (item.status === "NG" ? 1 : 0))
+      : [0];
+
   const lineData = {
-    labels: ["Tue", "Wed", "Thu", "Fri", "Sat", "Sat", "Sun", "Mon"],
+    labels: trendLabels,
     datasets: [
       {
         fill: true,
         label: "NG Parts",
-        data: [8, 12, 8, 13, 10, 12, 22, 28],
+        data: trendValues,
         borderColor: "#ef4444",
         backgroundColor: "rgba(239, 68, 68, 0.1)",
         tension: 0.4,
@@ -106,93 +154,123 @@ export default function Dashboard() {
     maintainAspectRatio: false,
     plugins: { legend: { display: false } },
     scales: {
-      y: { display: false },
+      y: {
+        display: true,
+        ticks: {
+          stepSize: 1,
+        },
+      },
       x: { grid: { display: false } },
     },
   };
 
-  // --- DATA RECENT INSPECTIONS ---
-  // TOLONG NANTI INI DISESUAIIN YA DATANYA
-  const recentData = [
-    { id: "S003", time: "12:06", status: "NG", color: "bg-red-500" },
-    { id: "S004", time: "12:05", status: "OK", color: "bg-green-500" },
-    { id: "S003", time: "12:01", status: "NG", color: "bg-red-500" },
-  ];
+  const formatTime = (timestamp) => {
+    if (!timestamp) return "-";
+
+    return new Date(timestamp).toLocaleTimeString("id-ID", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
 
   return (
     <div className="flex bg-gray-100 min-h-screen font-poppins">
       <Sidebar user={user} />
 
       <div className="flex-1 p-10 overflow-y-auto">
-        
         {/* TOP BAR */}
         <div className="flex justify-between items-start mb-10">
           <div>
-            <h1 className="text-3xl font-black text-gray-800 tracking-tighter ">Dashboard</h1>
-            <p className="text-gray-500 mt-1">Overview of inspection results and quality performance in real-time</p>
+            <h1 className="text-3xl font-black text-gray-800 tracking-tighter">
+              Dashboard
+            </h1>
+            <p className="text-gray-500 mt-1">
+              Overview of inspection results and quality performance in real-time
+            </p>
           </div>
 
           <div className="flex flex-col items-end gap-3 text-right">
             <div className="flex items-center gap-2 text-gray-800 bg-white/80 px-4 py-1 rounded-full shadow-sm border border-white">
-              <FaClock className="text-blue-500" /> 
+              <FaClock className="text-blue-500" />
               <span className="font-mono font-bold text-xl">{time}</span>
             </div>
+
             <div className="relative">
               <FaSearch className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-              <input 
-                type="text" 
-                placeholder="Search" 
-                className="pl-10 pr-4 py-1.5 border border-gray-200 rounded-lg text-sm w-64 shadow-sm outline-none bg-white" 
+              <input
+                type="text"
+                placeholder="Search"
+                className="pl-10 pr-4 py-1.5 border border-gray-200 rounded-lg text-sm w-64 shadow-sm outline-none bg-white"
               />
             </div>
           </div>
         </div>
 
+        {loading && (
+          <p className="text-sm text-gray-400 mb-4 italic">
+            Loading dashboard data...
+          </p>
+        )}
+
         {/* CARDS SECTION */}
         <div className="grid grid-cols-4 gap-6 mb-10">
           <div className="bg-white p-6 rounded-3xl shadow-sm border-b-8 border-blue-500">
-            <p className="text-gray-400 text-[10px] font-bold uppercase mb-2">Total Inspections</p>
+            <p className="text-gray-400 text-[10px] font-bold uppercase mb-2">
+              Total Inspections
+            </p>
             <h2 className="text-5xl font-black text-blue-600">
-              <AnimatedNumber value={1250} />
+              <AnimatedNumber value={dashboard.total_inspections || 0} />
             </h2>
           </div>
 
           <div className="bg-white p-6 rounded-3xl shadow-sm border-b-8 border-green-500">
-            <p className="text-gray-400 text-[10px] font-bold uppercase mb-2">OK Parts</p>
+            <p className="text-gray-400 text-[10px] font-bold uppercase mb-2">
+              OK Parts
+            </p>
             <h2 className="text-5xl font-black text-green-600">
-              <AnimatedNumber value={1150} />
+              <AnimatedNumber value={dashboard.ok_count || 0} />
             </h2>
           </div>
 
           <div className="bg-white p-6 rounded-3xl shadow-sm border-b-8 border-red-500">
-            <p className="text-gray-400 text-[10px] font-bold uppercase mb-2">NG Parts</p>
+            <p className="text-gray-400 text-[10px] font-bold uppercase mb-2">
+              NG Parts
+            </p>
             <h2 className="text-5xl font-black text-red-600">
-              <AnimatedNumber value={10} />
+              <AnimatedNumber value={dashboard.ng_count || 0} />
             </h2>
           </div>
 
           <div className="bg-white p-6 rounded-3xl shadow-sm border-b-8 border-orange-500 flex items-center justify-between">
             <div>
-              <p className="text-gray-400 text-[10px] font-bold uppercase mb-2">NG Rate</p>
+              <p className="text-gray-400 text-[10px] font-bold uppercase mb-2">
+                NG Rate
+              </p>
               <h2 className="text-5xl font-black text-orange-600">
-                <AnimatedNumber value={8.0} isDecimal={true} />%
+                <AnimatedNumber
+                  value={dashboard.ng_rate || 0}
+                  isDecimal={true}
+                />
+                %
               </h2>
             </div>
-            <SimplePieChart rate={8} />
+            <SimplePieChart rate={dashboard.ng_rate || 0} />
           </div>
         </div>
 
-        {/*  TREND & RECENT SECTION */}
+        {/* TREND & RECENT SECTION */}
         <div className="space-y-8">
-          
           {/* TREND CHART */}
           <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-50">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-lg font-black text-gray-800 tracking-tight">NG Trend</h2>
+              <h2 className="text-lg font-black text-gray-800 tracking-tight">
+                NG Trend
+              </h2>
               <button className="text-blue-500 text-xs font-bold hover:underline flex items-center gap-1">
-                1 - 6 Month <FaChevronRight className="text-[10px]" />
+                Recent Data <FaChevronRight className="text-[10px]" />
               </button>
             </div>
+
             <div className="h-64">
               <Line data={lineData} options={lineOptions} />
             </div>
@@ -201,24 +279,50 @@ export default function Dashboard() {
           {/* RECENT INSPECTIONS */}
           <div className="bg-white p-8 rounded-3xl shadow-sm border border-gray-50">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-lg font-black text-gray-800 tracking-tight">Recent Inspections</h2>
-              <button className="text-blue-500 text-xs font-bold hover:underline flex items-center gap-1">
+              <h2 className="text-lg font-black text-gray-800 tracking-tight">
+                Recent Inspections
+              </h2>
+              <button
+                onClick={() => (window.location.href = "/history")}
+                className="text-blue-500 text-xs font-bold hover:underline flex items-center gap-1"
+              >
                 View All <FaChevronRight className="text-[10px]" />
               </button>
             </div>
+
             <div className="space-y-4">
-              {recentData.map((item, idx) => (
-                <div key={idx} className="flex justify-between items-center p-4 hover:bg-gray-50 rounded-2xl transition-all border-b border-gray-50 last:border-0">
-                  <div className="flex items-center gap-4">
-                    <div className={`w-3 h-3 rounded-full ${item.color} animate-pulse`}></div>
-                    <div>
-                      <p className="font-bold text-gray-800">{item.id} - {item.status}</p>
-                      <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Today</p>
+              {recentData.length > 0 ? (
+                recentData.map((item) => (
+                  <div
+                    key={item.id}
+                    className="flex justify-between items-center p-4 hover:bg-gray-50 rounded-2xl transition-all border-b border-gray-50 last:border-0"
+                  >
+                    <div className="flex items-center gap-4">
+                      <div
+                        className={`w-3 h-3 rounded-full ${
+                          item.status === "OK" ? "bg-green-500" : "bg-red-500"
+                        } animate-pulse`}
+                      ></div>
+                      <div>
+                        <p className="font-bold text-gray-800">
+                          {item.session_id} - {item.status}
+                        </p>
+                        <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">
+                          {item.length_mm} mm × {item.width_mm} mm
+                        </p>
+                      </div>
                     </div>
+
+                    <p className="font-mono font-bold text-gray-700">
+                      {formatTime(item.timestamp)}
+                    </p>
                   </div>
-                  <p className="font-mono font-bold text-gray-700">{item.time}</p>
+                ))
+              ) : (
+                <div className="text-center py-10 text-gray-300 italic font-medium">
+                  No recent inspection data.
                 </div>
-              ))}
+              )}
             </div>
           </div>
         </div>
