@@ -96,6 +96,7 @@ export default function InspectionLive() {
       // Matikan kamera browser sebentar agar kamera laptop bisa dipakai backend OpenCV.
       if (isCameraOn) {
         stopCamera();
+        await new Promise((resolve) => setTimeout(resolve, 800));
       }
 
       const res = await API.post("/inspection/start", {
@@ -115,7 +116,7 @@ export default function InspectionLive() {
 
       // Tampilkan gambar hasil deteksi asli dari backend OpenCV.
       if (result.image_path) {
-        setResultImage(`${API_BASE_URL}/${result.image_path}`);
+        setResultImage(`${API_BASE_URL}/${result.image_path}?t=${Date.now()}`);
       }
 
       setSessionResults((prev) => [result, ...prev]);

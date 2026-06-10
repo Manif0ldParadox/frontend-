@@ -54,7 +54,11 @@ export default function Sidebar({ user }) {
         </div>
 
         <button
-          onClick={() => { localStorage.removeItem("token"); window.location.href = "/"; }}
+          onClick={() => {
+            localStorage.removeItem("token");
+            localStorage.removeItem("user");
+            window.location.href = "/login";
+          }}
           className="w-full flex items-center justify-center gap-3 bg-[#1A2530] py-3 rounded-xl hover:bg-red-900 transition-all font-semibold shadow-lg"
         >
           <FaSignOutAlt className="rotate-180" /> Log Out

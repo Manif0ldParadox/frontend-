@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.db
+.env
+
+capstone-a3-backend/__pycache__/
+capstone-a3-backend/logs/
+capstone-a3-backend/exports/
+capstone-a3-backend/captures/
+capstone-a3-backend/venv/
+
+qc-frontend/node_modules/
+qc-frontend/dist/
+qc-frontend/capstone-a3-backend_backup/
+.DS_Store
