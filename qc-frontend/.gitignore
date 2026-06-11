@@ -21,6 +21,7 @@ capstone-a3-backend/captures/
 capstone-a3-backend/venv/
 qc-frontend/node_modules/
 qc-frontend/dist/
+capstone-a3-backend_backup/
 
 # Editor directories and files
 .vscode/*

@@ -18,6 +18,8 @@ export default function InspectionLive() {
   const [time, setTime] = useState("");
   const [user, setUser] = useState(null);
   const [isCameraOn, setIsCameraOn] = useState(true);
+  const [cameraDevices, setCameraDevices] = useState([]);
+  const [selectedCameraId, setSelectedCameraId] = useState("");
 
   const [length, setLength] = useState(0.0);
   const [width, setWidth] = useState(0.0);
@@ -48,10 +50,17 @@ export default function InspectionLive() {
   }, []);
 
   // START KAMERA FRONTEND
-  const startCamera = async () => {
+  const startCamera = async (cameraId = selectedCameraId) => {
     try {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+
+      const videoConstraints = cameraId
+        ? { deviceId: { exact: cameraId } }
+        : true;
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: true,
+        video: videoConstraints,
       });
 
       streamRef.current = stream;
@@ -61,10 +70,44 @@ export default function InspectionLive() {
       }
 
       setIsCameraOn(true);
+
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoInputs = devices.filter(
+        (device) => device.kind === "videoinput"
+      );
+      setCameraDevices(videoInputs);
+
+      if (!cameraId) {
+        const preferredCamera = videoInputs.find((device) => {
+          const label = device.label.toUpperCase();
+          return label.includes("C270") || label.includes("WEBCAM");
+        });
+
+        if (preferredCamera) {
+          const activeDeviceId = stream.getVideoTracks()[0]?.getSettings()
+            .deviceId;
+          setSelectedCameraId(preferredCamera.deviceId);
+
+          if (activeDeviceId !== preferredCamera.deviceId) {
+            stream.getTracks().forEach((track) => track.stop());
+            await startCamera(preferredCamera.deviceId);
+          }
+        } else if (videoInputs[0]) {
+          setSelectedCameraId(videoInputs[0].deviceId);
+        }
+      }
     } catch (err) {
       console.error("Gagal akses kamera:", err);
       alert("Pastikan izin kamera sudah diberikan.");
     }
+  };
+
+  const handleCameraChange = async (event) => {
+    const cameraId = event.target.value;
+    setSelectedCameraId(cameraId);
+    stopCamera();
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await startCamera(cameraId);
   };
 
   // STOP KAMERA FRONTEND
@@ -86,6 +129,8 @@ export default function InspectionLive() {
     startCamera();
 
     return () => stopCamera();
+    // Camera initialization should only run when the page is mounted.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // SAVE INSPECTION KE BACKEND
@@ -96,7 +141,7 @@ export default function InspectionLive() {
       // Matikan kamera browser sebentar agar kamera laptop bisa dipakai backend OpenCV.
       if (isCameraOn) {
         stopCamera();
-        await new Promise((resolve) => setTimeout(resolve, 800));
+        await new Promise((resolve) => setTimeout(resolve, 1500));
       }
 
       const res = await API.post("/inspection/start", {
@@ -148,7 +193,8 @@ export default function InspectionLive() {
               INSPECTION MODE
             </h1>
             <p className="text-gray-500">
-              Live quality checking via computer vision
+              Preview camera feed. Measurement runs when SAVE INSPECTION is
+              pressed.
             </p>
           </div>
 
@@ -167,24 +213,43 @@ export default function InspectionLive() {
                   Live Camera Feed
                 </h2>
 
-                <button
-                  onClick={isCameraOn ? stopCamera : startCamera}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                    isCameraOn
-                      ? "bg-red-100 text-red-600 hover:bg-red-200"
-                      : "bg-blue-100 text-blue-600 hover:bg-blue-200"
-                  }`}
-                >
-                  {isCameraOn ? (
-                    <>
-                      <FaVideoSlash /> Close Camera
-                    </>
-                  ) : (
-                    <>
-                      <FaVideo /> Open Camera
-                    </>
-                  )}
-                </button>
+                <div className="flex items-center gap-3">
+                  <select
+                    value={selectedCameraId}
+                    onChange={handleCameraChange}
+                    disabled={isSaving || cameraDevices.length === 0}
+                    aria-label="Select preview camera"
+                    className="max-w-56 border border-gray-200 bg-white px-3 py-2 rounded-lg text-xs font-semibold text-gray-600 outline-none focus:ring-2 focus:ring-blue-100 disabled:opacity-50"
+                  >
+                    {cameraDevices.length === 0 && (
+                      <option value="">Default camera</option>
+                    )}
+                    {cameraDevices.map((device, index) => (
+                      <option key={device.deviceId} value={device.deviceId}>
+                        {device.label || `Camera ${index + 1}`}
+                      </option>
+                    ))}
+                  </select>
+
+                  <button
+                    onClick={isCameraOn ? stopCamera : () => startCamera()}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                      isCameraOn
+                        ? "bg-red-100 text-red-600 hover:bg-red-200"
+                        : "bg-blue-100 text-blue-600 hover:bg-blue-200"
+                    }`}
+                  >
+                    {isCameraOn ? (
+                      <>
+                        <FaVideoSlash /> Close Camera
+                      </>
+                    ) : (
+                      <>
+                        <FaVideo /> Open Camera
+                      </>
+                    )}
+                  </button>
+                </div>
               </div>
 
               <div className="relative rounded-2xl overflow-hidden bg-slate-900 aspect-video flex items-center justify-center border-4 border-gray-50 shadow-inner">
@@ -216,6 +281,20 @@ export default function InspectionLive() {
                     </div>
                   </div>
                 )}
+              </div>
+
+              <div className="mt-4 border-l-4 border-blue-400 bg-blue-50 px-4 py-3 text-xs text-gray-600">
+                <p className="font-bold text-gray-700 mb-1">Object setup</p>
+                <p>
+                  Use a plain, contrasting background. Place the object on a
+                  table or paper, avoid direct flash, and fill about 30-60% of
+                  the camera area. Use a simple holder or jig to keep its
+                  position stable.
+                </p>
+                <p className="mt-1 text-gray-500">
+                  The selector controls browser preview only. OpenCV uses the
+                  camera index configured in the backend.
+                </p>
               </div>
             </div>
 

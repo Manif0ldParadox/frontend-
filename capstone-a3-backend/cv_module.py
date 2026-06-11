@@ -1,3 +1,4 @@
+import logging
 import os
 import time
 
@@ -5,7 +6,6 @@ import cv2
 import numpy as np
 
 
-CAMERA_INDEX = int(os.getenv("CAMERA_INDEX", "0"))
 PIXELS_PER_MM = float(os.getenv("PIXELS_PER_MM", "10.0"))
 TARGET_LENGTH_MM = float(os.getenv("TARGET_LENGTH_MM", "32.5"))
 TARGET_WIDTH_MM = float(os.getenv("TARGET_WIDTH_MM", "12.5"))
@@ -17,14 +17,23 @@ MAX_AREA_RATIO = float(os.getenv("MAX_CONTOUR_AREA_RATIO", "0.85"))
 MIN_ASPECT_RATIO = float(os.getenv("MIN_ASPECT_RATIO", "1.05"))
 MAX_ASPECT_RATIO = float(os.getenv("MAX_ASPECT_RATIO", "15.0"))
 
+logger = logging.getLogger(__name__)
+
+# Internal and external camera indexes can differ between devices. On macOS,
+# use test_camera.py or cv2.VideoCapture(index) to find the correct index.
+CAMERA_INDEX = 0
+CANNY_THRESHOLDS = ((30, 80), (50, 120), (80, 160))
+
 
 def _capture_frame():
     camera = cv2.VideoCapture(CAMERA_INDEX)
-    if not camera.isOpened():
-        camera.release()
-        raise RuntimeError(f"Camera {CAMERA_INDEX} tidak dapat dibuka")
-
     try:
+        if not camera.isOpened():
+            raise RuntimeError(
+                f"Camera index {CAMERA_INDEX} gagal dibuka/dibaca. "
+                "Coba ubah CAMERA_INDEX di cv_module.py."
+            )
+
         camera.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
         camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
         time.sleep(0.35)
@@ -32,51 +41,43 @@ def _capture_frame():
         frame = None
         for _ in range(8):
             success, candidate = camera.read()
-            if success and candidate is not None:
+            if success and candidate is not None and candidate.size > 0:
                 frame = candidate
             time.sleep(0.04)
 
         if frame is None:
-            raise RuntimeError("Camera terbuka tetapi frame tidak dapat dibaca")
-        return frame
+            raise RuntimeError(
+                f"Camera index {CAMERA_INDEX} gagal dibuka/dibaca. "
+                "Coba ubah CAMERA_INDEX di cv_module.py."
+            )
+
+        logger.info("Using OpenCV camera index %s", CAMERA_INDEX)
+        return frame, CAMERA_INDEX
     finally:
         camera.release()
+        logger.info("Released OpenCV camera index %s", CAMERA_INDEX)
 
 
-def _find_target_contour(frame):
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (7, 7), 0)
-    frame_area = frame.shape[0] * frame.shape[1]
-    frame_height, frame_width = frame.shape[:2]
-    kernel = np.ones((5, 5), np.uint8)
-    candidates = []
-
-    for threshold_mode in (cv2.THRESH_BINARY, cv2.THRESH_BINARY_INV):
-        _, threshold = cv2.threshold(
-            blurred, 0, 255, threshold_mode | cv2.THRESH_OTSU
-        )
-        threshold = cv2.morphologyEx(threshold, cv2.MORPH_OPEN, kernel)
-        threshold = cv2.morphologyEx(threshold, cv2.MORPH_CLOSE, kernel, iterations=2)
-        contours, _ = cv2.findContours(
-            threshold, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-        candidates.extend(contours)
-
+def _filter_contours(contours, frame_shape):
+    frame_height, frame_width = frame_shape[:2]
+    frame_area = frame_height * frame_width
+    edge_margin = max(5, int(min(frame_height, frame_width) * 0.015))
     area_filtered = []
     preferred = []
-    for contour in candidates:
+
+    for contour in contours:
         area = cv2.contourArea(contour)
         if area < MIN_AREA_PX or area > frame_area * MAX_AREA_RATIO:
             continue
 
         x, y, width, height = cv2.boundingRect(contour)
-        touches_frame = (
-            x <= 2
-            or y <= 2
-            or x + width >= frame_width - 2
-            or y + height >= frame_height - 2
+        too_close_to_edge = (
+            x <= edge_margin
+            or y <= edge_margin
+            or x + width >= frame_width - edge_margin
+            or y + height >= frame_height - edge_margin
         )
-        if touches_frame:
+        if too_close_to_edge:
             continue
 
         area_filtered.append(contour)
@@ -90,12 +91,48 @@ def _find_target_contour(frame):
         if MIN_ASPECT_RATIO <= aspect_ratio <= MAX_ASPECT_RATIO:
             preferred.append(contour)
 
-    # If the shape filter is too strict, retain the largest plausible contour.
-    usable = preferred or area_filtered
-    if not usable:
-        raise ValueError("Objek tidak terdeteksi. Atur posisi atau pencahayaan objek.")
+    # Keep the largest plausible contour when the aspect-ratio filter is strict.
+    return preferred or area_filtered
 
-    return max(usable, key=cv2.contourArea)
+
+def _find_target_contour(frame, debug_image_path):
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+    contrasted = clahe.apply(gray)
+    blurred = cv2.GaussianBlur(contrasted, (7, 7), 0)
+    kernel = np.ones((3, 3), np.uint8)
+    total_contours = 0
+    total_valid = 0
+
+    for lower_threshold, upper_threshold in CANNY_THRESHOLDS:
+        edges = cv2.Canny(blurred, lower_threshold, upper_threshold)
+        edges = cv2.morphologyEx(
+            edges, cv2.MORPH_CLOSE, kernel, iterations=2
+        )
+        contours, _ = cv2.findContours(
+            edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        valid_contours = _filter_contours(contours, frame.shape)
+        total_contours += len(contours)
+        total_valid += len(valid_contours)
+
+        if valid_contours:
+            logger.info(
+                "Detected object with Canny thresholds (%s, %s): "
+                "%s contours, %s valid",
+                lower_threshold,
+                upper_threshold,
+                len(contours),
+                len(valid_contours),
+            )
+            return max(valid_contours, key=cv2.contourArea)
+
+    raise ValueError(
+        "Objek tidak terdeteksi. Kemungkinan background tidak polos/kontras, "
+        "cahaya terlalu silau atau gelap, atau objek terlalu kecil/jauh. "
+        f"Debug image: {debug_image_path}. "
+        f"Contour ditemukan: {total_contours}; contour valid: {total_valid}."
+    )
 
 
 def _is_within_tolerance(value, target, tolerance):
@@ -106,8 +143,16 @@ def run_inspection(session_id, captures_dir):
     if PIXELS_PER_MM <= 0:
         raise RuntimeError("PIXELS_PER_MM harus lebih besar dari 0")
 
-    frame = _capture_frame()
-    contour = _find_target_contour(frame)
+    frame, camera_index = _capture_frame()
+    os.makedirs(captures_dir, exist_ok=True)
+    debug_filename = f"{session_id}_debug_raw.jpg"
+    debug_output_path = os.path.join(captures_dir, debug_filename)
+    if not cv2.imwrite(debug_output_path, frame):
+        raise RuntimeError("Debug raw frame gagal disimpan")
+
+    contour = _find_target_contour(
+        frame, debug_image_path=f"captures/{debug_filename}"
+    )
     rectangle = cv2.minAreaRect(contour)
     box = cv2.boxPoints(rectangle).astype(int)
     rect_width, rect_height = rectangle[1]
@@ -129,6 +174,7 @@ def run_inspection(session_id, captures_dir):
         if status == "OK"
         else "One or more dimensions are outside tolerance"
     )
+    notes = f"{notes}. Captured with camera index {camera_index}."
 
     color = (0, 180, 0) if status == "OK" else (0, 0, 255)
     cv2.drawContours(frame, [box], 0, color, 3)
@@ -143,7 +189,6 @@ def run_inspection(session_id, captures_dir):
         cv2.LINE_AA,
     )
 
-    os.makedirs(captures_dir, exist_ok=True)
     filename = f"{session_id}.jpg"
     output_path = os.path.join(captures_dir, filename)
     if not cv2.imwrite(output_path, frame):
@@ -153,7 +198,7 @@ def run_inspection(session_id, captures_dir):
         "length_mm": length_mm,
         "width_mm": width_mm,
         "status": status,
-        "source": f"Camera {CAMERA_INDEX + 1}",
+        "source": f"cv_module_camera_{camera_index}",
         "notes": notes,
         "image_path": f"captures/{filename}",
     }

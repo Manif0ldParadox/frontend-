@@ -1,6 +1,6 @@
 import Sidebar from "../components/Sidebar";
 import { useState, useEffect } from "react";
-import { FaClock, FaSearch, FaFilter } from "react-icons/fa";
+import { FaClock, FaSearch, FaFilter, FaDownload } from "react-icons/fa";
 import API from "../api/api";
 
 export default function History() {
@@ -9,6 +9,7 @@ export default function History() {
   const [searchQuery, setSearchQuery] = useState("");
   const [historyData, setHistoryData] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [user, setUser] = useState(null);
 
   // FETCH USER + CLOCK
@@ -60,11 +61,38 @@ export default function History() {
   // FETCH HISTORY WHEN FILTER CHANGES
   useEffect(() => {
     fetchHistory();
+    // Filtering triggers a fetch; text search remains submit-based.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeFilter]);
 
   const handleSearch = (e) => {
     e.preventDefault();
     fetchHistory();
+  };
+
+  const handleExportCsv = async () => {
+    try {
+      setExporting(true);
+      const response = await API.get("/export/csv", {
+        responseType: "blob",
+      });
+      const disposition = response.headers["content-disposition"] || "";
+      const filenameMatch = disposition.match(/filename="?([^"]+)"?/);
+      const filename = filenameMatch?.[1] || "inspection_results.csv";
+      const downloadUrl = window.URL.createObjectURL(response.data);
+      const link = document.createElement("a");
+      link.href = downloadUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (err) {
+      console.log("Export CSV error:", err.response?.data || err);
+      alert("Gagal mengunduh CSV");
+    } finally {
+      setExporting(false);
+    }
   };
 
   const formatDateTime = (timestamp) => {
@@ -141,6 +169,15 @@ export default function History() {
             className="px-4 py-2 bg-white border border-gray-200 rounded-xl text-xs font-bold text-gray-600 hover:bg-gray-50"
           >
             Refresh
+          </button>
+
+          <button
+            onClick={handleExportCsv}
+            disabled={exporting}
+            className="ml-auto flex items-center gap-2 px-4 py-2 bg-[#2D3E50] text-white rounded-xl text-xs font-bold hover:bg-[#1A2530] disabled:opacity-60"
+          >
+            <FaDownload />
+            {exporting ? "Exporting..." : "Export CSV"}
           </button>
         </div>
 

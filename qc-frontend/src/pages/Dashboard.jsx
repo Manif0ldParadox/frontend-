@@ -185,7 +185,7 @@ export default function Dashboard() {
               Dashboard
             </h1>
             <p className="text-gray-500 mt-1">
-              Overview of inspection results and quality performance in real-time
+              Summary of saved inspection results and quality performance
             </p>
           </div>
 
